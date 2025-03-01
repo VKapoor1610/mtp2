@@ -83,6 +83,7 @@ def sample_from_quad(total_numbers, n_samples, pow=1.2):
         raise ValueError("Cannot find suitable pow. Please adjust n_samples or decrease center.")
     return indices, pow
 
+#  We can try to change sample_from_quad_center -> new heuristic type of sampling by running diffusion on multiple prompts and anluysing the steps with the chnage observed
 def sample_from_quad_center(total_numbers, n_samples, center, pow=1.2):
     while pow > 1:
         # Generate linearly spaced values between 0 and a max value
@@ -747,8 +748,26 @@ class StableDiffusionPipeline(DiffusionPipeline, TextualInversionLoaderMixin, Lo
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
                 if i in interval_seq:
-                    prv_features = None            
+                    prv_features = None   
+                             
+                from ..flops import count_ops_and_params
 
+                example_inputs = {
+                    'sample': latent_model_input, 
+                    'timestep': t,
+                    'encoder_hidden_states': prompt_embeds,
+                    'cross_attention_kwargs': cross_attention_kwargs,
+                    'replicate_prv_feature': prv_features,
+                    'quick_replicate': cache_interval>1,
+                    'cache_layer_id': cache_layer_id,
+                    'cache_block_id': cache_block_id,
+                    'return_dict': False,
+                }
+                macs, nparams = count_ops_and_params(self.unet, example_inputs=example_inputs, layer_wise=False)
+                print("#Params: {:.4f} M".format(nparams/1e6))
+                print("#MACs: {:.4f} G".format(macs/1e9))
+                
+                
                 # predict the noise residual
                 noise_pred, prv_features = self.unet(
                     latent_model_input,
@@ -780,6 +799,7 @@ class StableDiffusionPipeline(DiffusionPipeline, TextualInversionLoaderMixin, Lo
                     progress_bar.update()
                     if callback is not None and i % callback_steps == 0:
                         callback(i, t, latents)
+                torch.cuda.empty_cache()
 
         if not output_type == "latent":
             if output_all_sequence:
